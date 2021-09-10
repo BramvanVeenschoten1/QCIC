@@ -42,6 +42,7 @@ bracePi _ = id
 braceApp :: Term -> String -> String
 braceApp (App _ []) = id
 braceApp (App {}) = embrace
+braceApp (Pi {}) = embrace
 braceApp _ = id
 
 showTerm :: Signature -> Context -> Term -> String
@@ -66,9 +67,9 @@ showTerm sig ctx x = case x of
         Implicit -> ("{"++) . (++"}")
         Explicit -> id
     in
-     if occurs 0 tb
-     then "Pi " ++ pl (mult ++ name ++ " : " ++ ta') ++ ", " ++ tb'
-     else ta' ++ arrow ++ tb'
+     if doesNotOccur ctx 0 0 tb
+     then ta' ++ arrow ++ tb'
+     else "Pi " ++ pl (mult ++ name ++ " : " ++ ta') ++ ", " ++ tb'
 
   where
     

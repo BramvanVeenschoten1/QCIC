@@ -43,11 +43,21 @@ map push ctx f t = case t of
   Let name ta a b -> Let name (f ctx ta) (f ctx a) (f (push (Hyp name ta (Just a)) ctx) b)
   t -> t
 
+-- inclusive range of dbis
+doesNotOccur :: Context -> Int -> Int -> Term -> Bool
+doesNotOccur ctx n nn t = f 0 t True where
+  f _ _ False = False
+  f k (App (Var m) _) _
+    | m >= n + k && m <= nn + k = False
+    | m < k && m > nn + k = True
+    | otherwise = True
+  f k t _ = Utils.fold (const (+1)) k f t True
+{-
 occurs :: Int -> Term -> Bool
 occurs k t = f k t False where
   f k (App (Var n) args) acc = n == k || L.foldr (f k) acc args
   f k t acc = Utils.fold (const (+1)) k f t acc
-
+-}
 countDomains :: Term -> Int
 countDomains (Pi p m name src dst) = 1 + countDomains dst
 countDomains _ = 0

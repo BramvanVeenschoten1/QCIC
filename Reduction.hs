@@ -59,37 +59,33 @@ reduce sig ctx delta' t = beta 0 [] t [] where
       let
         def = fromMaybe (error "bad defno") (nth defno (sigDef sig ! block))
         clauses = defClauses def
-        nodes = defNodes def
-        first = last nodes
+        tree = defTree def
         fail = (unwind' e t s, True)
       in --trace "delta" $
-         iota nodes clauses fail [] first s
+         iota clauses fail [] tree s
   delta k e t s = (unwind' e t s, True)
   
-  iota :: [Dag] -> [Term] -> (Term,Bool) -> [Term] -> Dag -> [Term] -> (Term,Bool)
-  iota nodes clauses fail e (Intro t) (x:s) =
+  iota :: [Term] -> (Term,Bool) -> [Term] -> Tree -> [Term] -> (Term,Bool)
+  iota clauses fail e (Intro _ t) (x:s) =
     --trace "intro" $
-    iota nodes clauses fail (x:e) (fromMaybe (error "bad node index") (nth t nodes)) s
-  iota nodes clauses fail e (Body target env_filter) s = let
+    iota clauses fail (x:e) t s
+  iota clauses fail e (Body target env_filter) s = let
     e' = applyFilter env_filter e
     k = length e'
     t = fromMaybe (error "clauses out of bounds") (nth target clauses)
     in
      -- trace "body" $
       beta k e' t s
-  iota nodes clauses fail e (Case n alts) s = case whnf sig ctx <$> nth n e of
+  iota clauses fail e (Case n alts) s = case whnf sig ctx <$> nth n e of
     Nothing -> fail
     Just (App (Con _ _ ctorno paramno) args) -> let
-      args' = reverse (Prelude.drop paramno args)
-      e'    = args' ++ e
-      (target_tag,env_filter) = fromMaybe (error "bad ctorno in case") (nth ctorno alts)
-      target_node =  fromMaybe (error "bad node index") (nth target_tag nodes)
-      e'' = applyFilter env_filter e'
+      e' = reverse (Prelude.drop paramno args) ++ e
+      (_,target) = fromMaybe (error "bad ctorno in case") (nth ctorno alts)
       in 
         --trace "case" $
-        iota nodes clauses fail e'' target_node s
+        iota clauses fail e' target s
     _ -> fail
-  iota _ _ fail _ _ _ =
+  iota _ fail _ _ _ =
    -- trace "fail" $
     fail
 

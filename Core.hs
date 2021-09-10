@@ -53,11 +53,11 @@ data Term
   | Lam Plicity Mult String Term Term
   | Pi  Plicity Mult String Term Term
 
-data Dag
+data Tree
   = Body  Int [Int]
-  | Intro Int
-  | Case  Int [(Int,[Int])]
-    -- for each branch, arguments, target no, env filter
+  | Intro String Tree
+  | Case  Int [([String],Tree)]
+  -- for each branch, arguments, target no, env filter
 
 data Inductive = Inductive {
   indName    :: String,
@@ -70,7 +70,7 @@ data Definition = Definition {
   defType    :: Term,
   defHeight  :: Int,
   defClauses :: [Term],
-  defNodes   :: [Dag]}
+  defTree    :: Tree}
 
 data Signature = Signature {
   sigInd :: Map Int [Inductive],

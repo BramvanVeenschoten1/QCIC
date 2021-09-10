@@ -88,7 +88,7 @@ allOccurrencesPositive st ctx loc defcount defno paramno n nn t = f (whnf st [] 
   h x _ = Left (
     show loc ++ 
     showContext st ctx ++
-    "Head of constructor return type must be the datatype being defined, but is:\n" ++
+    "\nHead of constructor return type must be the datatype being defined, but is:\n" ++
     showTerm st ctx (App x []))
   
 
@@ -135,12 +135,3 @@ weaklyPositive st ctx loc n nn block_no t = f ctx n nn (substWithDummy block_no 
       then strictlyPositive st ctx loc n nn ta
       else  assert (doesNotOccur ctx n nn ta)
                    (show loc ++ "Recursive occurrence in negative position")
-
-doesNotOccur :: Context -> Int -> Int -> Term -> Bool
-doesNotOccur ctx n nn t = f 0 t True where
-  f _ _ False = False
-  f k (App (Var m) _) _
-    | m >= n + k && m <= nn + k = False
-    | m < k && m > nn + k = True
-    | otherwise = True
-  f k t _ = Utils.fold (const (+1)) k f t True

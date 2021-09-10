@@ -16,7 +16,14 @@ import Data.Either
 import Data.List as L
 import Control.Monad
 
-import Prelude hiding ((!!))
+{- TODO
+- give location of arguments in case of unification failure
+- give location and value of spine in case of inference failure
+- give location for unused linear arguments
+- implement multiplicity checks for implicit functions
+  - requires multiplicity gathering for complete terms
+  - might as well separate mult checking from spine inference
+-}
 
 type Postponed = ([Int], Int, Mult, Term, Expr) -- blocking variables, instantiating variable, mult, type, expression
 
@@ -96,22 +103,10 @@ typeOf sig ctx = f where
   f (Pi p m name src dst) = typeOf sig (Hyp name src Nothing : ctx) dst
   f (Lam p m name src dst) = Pi p m name src (typeOf sig (Hyp name src Nothing : ctx) dst)
   f (Let name ty val body) = psubst [val] (typeOf sig (Hyp name ty (Just val) : ctx) body)
+  -- type of var
   
   h ty [] = ty
   h (Pi p m name src dst) (arg : args) = h (whnf sig ctx (psubst [arg] dst)) args
-
-{-
-getUses :: Signature -> Context -> Term -> Uses
-getUses sig ctx (App hd args) = addUses (headUses hd) (f (typeOfHead hd) args) where
-  f ty [] = noUses
-  f ty (arg:args) = let
-    Pi _ m _ src dst = whnf sig ctx ty
-    uses = getUses
-    in addUses (multiplyUses m uses) (f (psubst [arg] dst) args)
-    
-  headUses (Var n) = singleUse n
-getUses _ _ _ = noUses
--}
 
 -- look up a qualified name in the symbol table
 lookupQualified :: ElabState -> Loc -> QName -> InferResult (Term,Term,Uses)
@@ -157,8 +152,8 @@ letAux :: ElabState -> Context -> Expr -> Maybe Expr -> Either String (Term,Term
 letAux st ctx expr ty = case ty of
   Just ty -> do
     let ty_loc = exprLoc ty
-    (ty,_,_) <- toEither (infer st ctx ty)
-    ensureSort (signature st) ctx ty_loc ty
+    (ty,k,_) <- toEither (infer st ctx ty)
+    ensureSort (signature st) ctx ty_loc k
     (term,uses) <- check st ctx expr ty
     pure (term,ty,uses)
   Nothing -> toEither (infer st ctx expr)
@@ -180,7 +175,7 @@ lamAux st ctx loc nloc name body ty = case whnf (signature st) ctx ty of
     let (use:uses') = uses
     checkUse name m use
     pure (Lam Implicit m name src body', uses')
-  Pi Explicit m name src dst -> do
+  Pi Explicit m _ src dst -> do
     (body',uses) <- check st (Hyp name src Nothing : ctx) body dst
     let (use:uses') = uses
     checkUse name m use
@@ -198,7 +193,7 @@ check st ctx expr ty = case expr of
   EApply loc head args -> do
     (hd,hd_ty,hd_uses) <- toEither (inferHead st ctx head)
     (app,app_ty,uses,menv,subst,postponed) <- eatSpine st ctx loc hd hd_ty hd_uses args mempty mempty mempty
-    subst' <- unify (exprLoc expr) (signature st) menv ctx subst app_ty ty
+    subst' <- unify (exprLoc expr) (signature st) menv 0 ctx subst app_ty ty
     (subst'',uses') <- toEither (solvePostponed st ctx menv subst' postponed uses)
     let app' = applySubst subst'' app
     if Prelude.null (keys menv \\ keys subst'')
@@ -207,7 +202,7 @@ check st ctx expr ty = case expr of
     pure (app',uses')
   ELet loc nloc name annot val body -> do
     (val,val_ty,val_uses) <- letAux st ctx val annot
-    (body,uses) <- check st (Hyp name val_ty (Just val) : ctx) body ty
+    (body,uses) <- check st (Hyp name val_ty (Just val) : ctx) body (lift 1 ty)
     let (use : uses') = uses
     pure (Let name val_ty val body, addUses uses' (multiplyUses (useSum use) val_uses))
   pi @ EPi {} -> do
@@ -283,8 +278,8 @@ eatSpine :: ElabState -> Context -> Loc -> Term -> Term -> Uses ->
   [Postponed] ->
   Either String (Term,Term,Uses,MetaEnv,Substitution,[Postponed])
 eatSpine st ctx loc head head_ty head_uses args menv subst postponed = do
-  let head_ty' = whnf (signature st) ctx head_ty
-  traceM ("> " ++ showTerm (signature st) ctx (applySubst subst head_ty'))
+  let head_ty' = whnf (signature st) ctx (applySubst subst head_ty)
+  --traceM ("> " ++ showTerm (signature st) ctx (applySubst subst head_ty'))
   case head_ty' of
     Pi Implicit Zero name src dst -> let
       v = size menv
@@ -312,7 +307,7 @@ eatSpine st ctx loc head head_ty head_uses args menv subst postponed = do
             args menv subst postponed
         else case infer st ctx arg of
           Success (arg,arg_ty,arg_uses) -> do
-            subst' <- unify arg_loc (signature st) menv ctx subst src arg_ty
+            subst' <- unify arg_loc (signature st) menv 0 ctx subst src arg_ty
             eatSpine st ctx loc
               (mkApp head [arg])
               (psubst [arg] dst)
@@ -340,41 +335,66 @@ eatSpine st ctx loc head head_ty head_uses args menv subst postponed = do
         showTerm (signature st) ctx other)
 
 -- TODO: a conflict should have the location of the argument, expected type, given type, and unification failure
--- if a metavariable occurs twice in a type, this might cause trouble.
--- updates substs should be applied to the other terms in the lhs 
-unify :: Loc -> Signature -> MetaEnv -> Context -> Substitution -> Term -> Term -> Either String Substitution
-unify loc sig menv ctx subst t0 t1 = cmp subst (whnf sig ctx t0) (whnf sig ctx t1) where
+-- Q: Should unify have recoverable failures? (such as for (?M x = x))
+unify :: Loc -> Signature -> MetaEnv -> Int -> Context -> Substitution -> Term -> Term -> Either String Substitution
+unify loc sig menv k ctx subst t0 t1 = cmp subst (whnf sig ctx t0) (whnf sig ctx t1) where
 
   cmp subst t0 t1 = case (t0,t1) of
     (Type,Type) -> pure subst
     (Kind,Kind) -> pure subst  
     (Lam _ _ name src0 dst0, Lam _ _ _ _ dst1) ->
-      unify' (Hyp name src0 Nothing : ctx) subst dst0 dst1
+      unify' (k + 1) (Hyp name src0 Nothing : ctx) subst dst0 dst1
     (Pi _ m0 name src0 dst0, Pi _ m1 _ src1 dst1) -> do
       assert (m0 == m1)
-      subst' <- unify' ctx subst src0 src1
-      unify' (Hyp name src0 Nothing : ctx) subst' dst0 dst1
+      subst' <- unify' k ctx subst src0 src1
+      unify' (k + 1) (Hyp name src0 Nothing : ctx) subst' dst0 dst1
     (Let name ta0 a0 b0, Let _ ta1 a1 b1) -> do
-      subst' <- unify' ctx subst ta0 ta1
-      subst2 <- unify' ctx subst' a0 a1
-      unify' (Hyp name ta0 (Just a0) : ctx) subst2 b0 b1
+      subst' <- unify' k ctx subst ta0 ta1
+      subst2 <- unify' k ctx subst' a0 a1
+      unify' (k + 1) (Hyp name ta0 (Just a0) : ctx) subst2 b0 b1
+    (App (Met v) [], val) -> case M.lookup v subst of
+      Just x -> cmp subst (lift k x) val
+      Nothing -> let
+        impossible = error "bad occurs check in unify"
+        subst' = M.insert v (psubst (replicate k impossible) val) subst    
+        in do
+          let l_ty = applySubst subst (lift k (menv ! v))
+              r_ty = typeOf sig ctx val
+          assert (doesNotOccur ctx 0 (k-1) val)  
+          assert (convertible sig ctx True
+            (applySubst subst (lift k (menv ! v)))
+            (typeOf sig ctx val))
+          pure subst'
     (App (Met v) xs0, App f1 xs1) -> case M.lookup v subst of
-      Just val -> cmp subst (mkApp val xs0) (App f1 xs1)
+      Just val -> cmp subst (mkApp (lift k val) xs0) (App f1 xs1)
       Nothing -> let
         len0 = length xs0
         len1 = length xs1
         (left,right) = L.splitAt (len1 - len0) xs1
         val = App f1 left
-        subst' = M.insert v val subst    
+        impossible = error "bad occurs check in unify"
+        subst' = M.insert v (psubst (replicate k impossible) val) subst    
         in do
-          let l_ty = applySubst subst (menv ! v)
+          let l_ty = applySubst subst (lift k (menv ! v))
               r_ty = typeOf sig ctx val
           assert (len0 <= len1)
+          assert (doesNotOccur ctx 0 (k-1) val)
           --traceM "types:"
           --traceM (showTerm sig ctx l_ty)
           --traceM (showTerm sig ctx r_ty)
+          
+          -- one more thing, we must assert the term instantiating the meta
+          -- is closed modulo the meta-context, and then must be lifted accordingly
+          -- 1. carry the difference between the local context and the spine context
+          -- 2. assert no references to the local context exist
+             -- equal to k is ok, free but smaller is problematic
+             -- doesNotOccur should be usable here
+             -- we need an inclusive range, any free variable up to but not including k is
+             -- prohibited, so we assert doesNotOccur ctx 0 (k - 1)
+          -- 3. antilift (?) the term. basically, substitute with error
+          
           assert (convertible sig ctx True
-            (applySubst subst (menv ! v))
+            (applySubst subst (lift k (menv ! v)))
             (typeOf sig ctx val))
           foldM (uncurry . cmp) subst' (zip xs0 right)
     (App f0 xs0, App f1 xs1) -> do

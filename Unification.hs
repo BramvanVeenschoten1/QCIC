@@ -151,8 +151,8 @@ data Result
 unifyIndices :: Signature -> Substitution -> Substitution -> [Equation] -> Result
 unifyIndices sig base subst [] = Yes subst
 unifyIndices sig base subst (eq : eqs)
-  | canDelete      = unifyIndices sig base subst eqs
-  | otherwise      = tryConflictInjectSolveCycle
+  | canDelete = unifyIndices sig base subst eqs
+  | otherwise = tryConflictInjectSolveCycle 
   where
     subst' = union base subst
     l  = whnf sig [] (applySubst subst' (fst eq))

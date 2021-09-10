@@ -207,8 +207,6 @@ checkData st defs = do
       name_names = zip (concat ctor_names) ctor_qnames ++ zip names qnames
    
   when debug $ traceM (intercalate "\n" (fmap showQName qnames))
-  when debug $ traceM "defined"
-  when debug $ traceM ""
   
   pure st {
     newName = fresh_id + 1,
@@ -299,8 +297,6 @@ checkDefinition st defs = do
     new_sig = Signature (sigInd obs) (M.insert obj_id defs alldefs)
     
   when debug $ traceM (intercalate "\n" (fmap showQName qnames))
-  when debug $ traceM "defined"
-  when debug $ traceM ""
 
   pure (st {
     newName = obj_id + 1,

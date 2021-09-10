@@ -198,6 +198,7 @@ whether the latter needs modification
 data Problem = Problem {
   problemNumber  :: Int,
   problemConstrs :: [LPattern],
+  problemSubst   :: Substitution,
   problemPats    :: [LPattern],
   problemRHS     :: Expr}
 
@@ -206,20 +207,7 @@ showProblem p = intercalate " "
   ["|"] ++
   fmap (showCPat . snd) (problemPats p))
 
-type PartialSubst = ([Int], Substitution)
-
-mergeSubstitutions :: [PartialSubst] -> Substitution
-mergeSubstitutions  = L.foldr (M.union . snd) mempty
-
-type StateCode = (Int, [Int])
-
-type Cache = Map StateCode Int
-
-type Node = (Dag,Uses)
-
 data ECST = ECST {
-  stCache   :: Cache,
-  stNodes   :: [Node],
   stClauses :: [Term],
   stNextVar :: Int}
 
@@ -239,31 +227,6 @@ searchDBI = f 0 where
   f n m ((m',_,_,_):ctx)
     | m == m' = n
     | otherwise = f (n + 1) m ctx
-
-encodeState :: [Problem] -> StateCode
-encodeState [] = error "encoding empty state"
-encodeState (prob:_) = (problemNumber prob, fmap fst (problemConstrs prob))
-
-lookupCache :: [Problem] -> EC Int -> EC Int
-lookupCache probs fail = do
-  cache <- gets stCache
-  case M.lookup (encodeState probs) cache of
-    Nothing -> fail
-    Just x -> pure x
-
-getNode :: Int -> EC Node
-getNode n = gets (\nodes -> stNodes nodes !! n)
-
-insertCache :: [Problem] -> EC Node -> EC Int
-insertCache probs mnode = do
-  node <- mnode
-  cache <- gets stCache
-  nodes <- gets stNodes
-  let n = length nodes
-  modify (\st -> st {
-    stCache = M.insert (encodeState probs) n cache,
-    stNodes = nodes ++ [node]})
-  pure n
 
 insertClause :: Term -> EC Int
 insertClause body = do
@@ -333,6 +296,23 @@ showMContext :: Signature -> MContext -> String
 showMContext sig ctx = showContext sig (unvisitCtx ctx)
 
 -- TODO
+-- make the unification state encoding independent from patterns inserted by the splitter
+   -- idea: only label constructor patterns => no, we would not distinguish problems with  
+   -- different contexts
+   -- why? we have not confirmed an error
+   -- post default split, the ignored arguments should be deleted and the state be the
+   -- same regardless of the path.
+   -- here's a real problem:
+   -- we're in the done step
+   -- the second clause is a catchall
+   -- there are postoned substitutions and deletable variables that can be applied/discarded
+   -- now that we know clause 2 does not apply
+   -- this is not the unique encoding of the state here.
+   -- AFTER sanitizing the context, the problem state should be unique
+   -- this suggests either we should map problem states to dags, or
+   -- have context sanitization as a separate step or a separate node
+-- give implicit constructor arguments usable names, take care not to shadow any variables
+-- make visual representation for case dags
 -- account for constant parameters, to fix function definitions
 -- add loction + function name info for stuckness?
 -- construct a list of reasons for stuckness (stuck constructors, uneven clause arguments)
@@ -340,24 +320,37 @@ showMContext sig ctx = showContext sig (unvisitCtx ctx)
 -- construct counterexample for coverage check?
 -- do the whole usage checking thing
 -- gather pattern codes to guide conflict search
-compileEquations :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> EC Int
-compileEquations st ctx subst [] ty = error "coverage error should have been detected earlier"
-compileEquations st ctx subst probs ty = do
+
+
+{- WE'RE GONNA DO A REHAUUUUUUUUUUUL
+- Context sanitization is now a separate step
+- this new step will have the highest priority
+- the new condition for `done` will include checking for the absence of postponed substitutions and ignored variables
+- the sanitize step will check if all constraints are solved and if so, discard all but the first clause.
+
+COMPROMISE: clauses are shared, nodes arent. sharing can be recovered after compilation.
+We won't need to bother encoding unification states, nor context sanitizing in any but the last step.
+Finally, we can still postpone substitutions, it appears to be the optimal way to implement defaulting.
+(Side note: if intro is followed by done, we can do a little eta-conversion)
+Q: is there a use in keeping the substitutions in the clauses? For compiling to terms, it makes sense.
+no need to mark substitutions
+-}
+
+compileEquations :: ElabState -> MContext -> [Problem] -> Term -> EC Int
+compileEquations st ctx [] ty = error "coverage error should have been detected earlier"
+compileEquations st ctx probs ty = do
   --traceM "context:"
   --traceM (showMContext (signature st) ctx)
   --traceM "problem:"
   --traceM (intercalate " " (fmap showProblem probs))
-
-  lookupCache probs $
-    insertCache probs $
     checkDone st ctx subst probs ty $
     searchSplit st ctx subst probs ty $
     tryIntro st ctx subst probs ty $
     checkAbsurd st ctx subst probs ty $
     C.lift $ Left "Equation compiler got stuck"
 
-checkDone :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> EC Node -> EC Node
-checkDone st ctx subst (prob:probs) ty fail
+checkDone :: ElabState -> MContext -> [Problem] -> Term -> EC Node -> EC Node
+checkDone st ctx (prob:probs) ty fail
   | L.null (problemPats prob) && all solved constrs = let
     named_vars = namedVars ctx prob
     (_,ctx',env_filter,ty') = specializeContext subst ctx ty [problemNumber prob] named_vars
@@ -377,7 +370,7 @@ checkDone st ctx subst (prob:probs) ty fail
   where
     solved (_,CCon {}) = False
     solved (_,CAbsurd _) = False
-    solved _ = True
+    solved    _ = True
     
     constrs = problemConstrs prob
     
@@ -385,8 +378,8 @@ checkDone st ctx subst (prob:probs) ty fail
     applyName hyp _ = hyp
     
 
-searchSplit :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> EC Node -> EC Node
-searchSplit st ctx subst probs @ (prob:_) ty fail = let
+searchSplit :: ElabState -> MContext -> [Problem] -> Term -> EC Node -> EC Node
+searchSplit st ctx probs @ (prob:_) ty fail = let
   findConPat (_,(_,CCon {})) = True
   findConPat _ = False
 
@@ -394,15 +387,18 @@ searchSplit st ctx subst probs @ (prob:_) ty fail = let
 
   in L.foldr (trySplit st ctx subst probs ty) fail pat_metas
 
-checkAbsurd :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> EC Node -> EC Node
-checkAbsurd st ctx subst probs @ (prob:_) ty fail = case problemConstrs prob of
+checkAbsurd :: ElabState -> MContext -> [Problem] -> Term -> EC Node -> EC Node
+checkAbsurd st ctx probs @ (prob:_) ty fail = case problemConstrs prob of
   ((_,CAbsurd _):_) -> trySplit st ctx subst probs ty 0 fail
   _ -> fail
     
-trySplit :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> Int -> EC Node -> EC Node
-trySplit st ctx postponed probs ty scrut_dbi fail = let
+trySplit :: ElabState -> MContext -> [Problem] -> Term -> Int -> EC Node -> EC Node
+trySplit st ctx probs ty scrut_dbi fail = let
   (scrut_met,scrut_mult,_,scrut_ty) = ctx !! scrut_dbi
-  App (Ind block defno _) args = scrut_ty
+  --App (Ind block defno _) args = scrut_ty -- non-exhaustive somehow => because normalization
+  (block,defno,args) = case whnf sig [] scrut_ty of 
+    App (Ind block defno _) args -> (block,defno,args)
+    other -> error (showTerm sig (unvisitCtx ctx) other)
   sig = signature st
   ind = sigInd sig ! block !! defno
   pno = paramno ind
@@ -493,8 +489,8 @@ trySplit st ctx postponed probs ty scrut_dbi fail = let
     in do
       --traceM "named vars"
       --traceM $ show named_vars
-    
-      target <- compileEquations st ctx' postponed'' probs' ty'
+
+      target <- compileEquations st ctx' probs' ty'
       -- do multiplicity checks
       pure (target, env_filter)
   
@@ -508,8 +504,8 @@ trySplit st ctx postponed probs ty scrut_dbi fail = let
       pure (Case scrut_dbi branches, error "implement usage propagation")
 
 -- distinguisth `done` from `stuck`
-tryIntro :: ElabState -> MContext -> [PartialSubst] -> [Problem] -> Term -> EC Node -> EC Node
-tryIntro st ctx subst probs ty fail = do
+tryIntro :: ElabState -> MContext -> [Problem] -> Term -> EC Node -> EC Node
+tryIntro st ctx probs ty fail = do
   --traceM "intro"
   case whnf (signature st) [] ty of
     Pi p m name src dst ->
@@ -530,7 +526,7 @@ tryIntro st ctx subst probs ty fail = do
             | L.null name = "?X" ++ show meta
             | otherwise = name
           ctx' = (meta,m,name',src) : ctx
-        target <- compileEquations st ctx' subst probs' (psubst [App (Met meta) []] dst)
+        target <- compileEquations st ctx' probs' (psubst [App (Met meta) []] dst)
         node <- getNode target
         let use : uses = snd node
         
