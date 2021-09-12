@@ -20,6 +20,11 @@ import Control.Monad
 - give location of arguments in case of unification failure
 - give location and value of spine in case of inference failure
 - give location for unused linear arguments
+- fix unification, definitions are expanded too eagerly
+  with f : a -> b = x = g x x
+    ?M x = f x should result in ?M = f, but f gets expanded into g x x
+    ?M x = g x x
+    and gets stuck
 - implement multiplicity checks for implicit functions
   - requires multiplicity gathering for complete terms
   - might as well separate mult checking from spine inference
@@ -30,12 +35,6 @@ type Postponed = ([Int], Int, Mult, Term, Expr) -- blocking variables, instantia
 type Use = [(Loc,Mult)]
 
 type Uses = [Use]
-
-showMetaEnv sig ctx = intercalate "\n" . fmap showEntry . assocs where
-  showEntry (m,ty) = "?M" ++ show m ++ " : " ++ showTerm sig ctx ty
-  
-showSubst sig ctx = intercalate "\n" . fmap showEntry . assocs where
-  showEntry (m,ty) = "?M" ++ show m ++ " = " ++ showTerm sig ctx ty
 
 noUses :: Uses
 noUses = repeat []

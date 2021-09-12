@@ -71,37 +71,26 @@ procedure:
 clauses need only take an equal number of arguments modulo absurdity, though.
 -}
 
-type LPattern = (Int,CPattern)
-
 data CPattern
   = CIgnore                      --     
   | CAbsurd Loc                  -- loc
   | CVar    Loc String           -- loc, name
-  | CCon    Loc Int [LPattern] -- loc, tag, args
-
-type PC a = StateT Int (Either String) a
+  | CCon    Loc Int [CPattern] -- loc, tag, args
 
 showCPat :: CPattern -> String
 showCPat CIgnore = "_"
 showCPat (CAbsurd _) = "()"
 showCPat (CVar _ s) = s
 showCPat (CCon _ tag []) = "c" ++ show tag
-showCPat (CCon _ tag pats) = "(c" ++ show tag ++ " " ++ intercalate " " (fmap (showCPat . snd) pats) ++ ")"
-
-newLabel :: PC Int
-newLabel = do
-  fresh <- get
-  modify (+1)
-  pure fresh
+showCPat (CCon _ tag pats) = "(c" ++ show tag ++ " " ++ intercalate " " (fmap showCPat pats) ++ ")"
 
 -- give some meaningful location?
-checkPatterns :: ElabState -> Loc -> Int -> [Pattern] -> Term -> PC [LPattern]
+checkPatterns :: ElabState -> Loc -> Int -> [Pattern] -> Term -> Either String [CPattern]
 checkPatterns st loc depth pats ty =
   case whnf (signature st) [] ty of
     Pi Implicit m name src dst -> do
-      label <- newLabel
       pats' <- checkPatterns st loc (depth + 1) pats dst
-      pure ((label,CIgnore) : pats')
+      pure (CIgnore : pats')
     Pi Explicit m name src dst -> case pats of
       [] -> pure []
       (pat : pats) -> do
@@ -110,20 +99,17 @@ checkPatterns st loc depth pats ty =
         pure (pat':pats')
     ty -> if L.null pats
       then pure []
-      else C.lift (Left (
-        "\nthe function type\n" ++
-        showTerm (signature st) [] ty ++
-        "\ntakes " ++ show depth ++ " arguments, but this clause has " ++
-        show (depth + length pats)))
+      else Left (
+        "\nthe function type takes " ++ show depth ++ " arguments, but this clause has " ++
+        show (depth + length pats))
 
-checkPattern :: ElabState -> Pattern -> Term -> PC LPattern
+checkPattern :: ElabState -> Pattern -> Term -> Either String CPattern
 checkPattern st pat ty = do
-  label <- newLabel
   let ty' = whnf (signature st) [] ty
   case ty' of
     App (Ind block defno _) iargs -> case pat of
-      PAbsurd loc -> pure (label, CAbsurd loc)
-      PIgnore _ -> pure (label, CIgnore)
+      PAbsurd loc -> pure (CAbsurd loc)
+      PIgnore _ -> pure (CIgnore)
       PApp loc nloc name args -> let
         ind = sigInd (signature st) ! block !! defno
         ctors = introRules ind
@@ -134,8 +120,8 @@ checkPattern st pat ty = do
         in case L.lookup name ctors of
           Nothing ->
             if L.null args
-            then pure (label, CVar nloc name)
-            else C.lift $ Left (show loc ++ 
+            then pure (CVar nloc name)
+            else Left (show loc ++ 
             "\n`" ++ name ++ "` is not a constructor of type " ++ indName ind)
           Just ty -> let
             ctorArity (Pi Implicit _ _ _ dst) = ctorArity dst
@@ -149,19 +135,19 @@ checkPattern st pat ty = do
             in if arity == argc
               then do
                 args' <- checkPatterns st loc 0 args ty'
-                pure (label, CCon loc (fromJust tag) args')
-              else C.lift $ Left (show loc ++
+                pure (CCon loc (fromMaybe (error "bad tag in pattern check") tag) args')
+              else Left (show loc ++
                 "\nconstructor " ++ name ++
                 " of type " ++ indName ind ++ "\n" ++
                 "expects " ++ show arity ++ " arguments, but got " ++ show argc)
     _ -> case pat of
-      PAbsurd loc -> C.lift $ Left (show loc ++
+      PAbsurd loc -> Left (show loc ++
         "\nabsurd pattern has type\n" ++
         showTerm (signature st) [] ty' ++
         "\nbut must be of some datatype\n")
-      PIgnore _ -> pure (label, CIgnore)
-      PApp loc nloc name [] -> pure (label, CVar nloc name)
-      PApp loc nloc name args -> C.lift $ Left (show loc ++
+      PIgnore _ -> pure (CIgnore)
+      PApp loc nloc name [] -> pure (CVar nloc name)
+      PApp loc nloc name args -> Left (show loc ++
         "\napplication pattern has type\n" ++
         showTerm (signature st) [] ty' ++
         "\nbut must be of some datatype\n")

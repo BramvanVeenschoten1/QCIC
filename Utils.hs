@@ -21,12 +21,6 @@ nth _ _ = Nothing
 applyFilter :: [Int] -> [a] -> [a]
 applyFilter f xs = fmap (\n -> fromMaybe (error "bad filter") (nth n xs)) f
 
-mkApp :: Term -> [Term] -> Term
-mkApp (App head args) args' = App head (args ++ args')
-mkApp t [] = t 
-mkApp (Lam p m name ty body) args = error "betaredex"
-mkApp t args = error "illegal application heads"
-
 fold :: (Hyp -> k -> k) -> k -> (k -> Term -> a -> a) -> Term -> a -> a
 fold push ctx f t acc = case t of
   App fun args -> L.foldr (f ctx) acc args
@@ -45,19 +39,21 @@ map push ctx f t = case t of
 
 -- inclusive range of dbis
 doesNotOccur :: Context -> Int -> Int -> Term -> Bool
-doesNotOccur ctx n nn t = f 0 t True where
-  f _ _ False = False
-  f k (App (Var m) _) _
-    | m >= n + k && m <= nn + k = False
-    | m < k && m > nn + k = True
-    | otherwise = True
-  f k t _ = Utils.fold (const (+1)) k f t True
-{-
-occurs :: Int -> Term -> Bool
-occurs k t = f k t False where
-  f k (App (Var n) args) acc = n == k || L.foldr (f k) acc args
+doesNotOccur ctx n nn t = not (occurs ctx n nn t) -- f 0 t True
+  where
+    f _ _ False = False
+    f k (App (Var m) args) acc
+      | m >= n + k && m <= nn + k = L.foldr (f k) acc args
+      | m < k && m > nn + k = True
+      | otherwise = True
+    f k t _ = Utils.fold (const (+1)) k f t True
+  
+occurs :: Context -> Int -> Int -> Term -> Bool
+occurs ctx min max t = f 0 t False where
+  f k (App (Var n) args) acc =
+    n >= min + k && n <= max + k || L.foldr (f k) acc args
   f k t acc = Utils.fold (const (+1)) k f t acc
--}
+
 countDomains :: Term -> Int
 countDomains (Pi p m name src dst) = 1 + countDomains dst
 countDomains _ = 0

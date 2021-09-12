@@ -75,7 +75,7 @@ showTerm sig ctx x = case x of
     
     showHead :: Head -> String
     showHead hd = case hd of 
-      Var n -> hypName (fromJust (nth n ctx))
+      Var n -> fromMaybe ("$" ++ show n) (fmap hypName (nth n ctx)) -- ++ "_" ++ show n
       Met n -> "?M" ++ show n
       Def blockno defno _ _ -> defName (sigDef sig ! blockno !! defno) 
       Ind blockno defno _ -> indName (sigInd sig ! blockno !! defno)
@@ -87,6 +87,12 @@ showContext :: Signature -> Context -> String
 showContext _ [] = ""
 showContext sig (Hyp name ty val : ctx) =
   showContext sig ctx ++ "\n" ++ name ++ " : " ++ showTerm sig ctx ty
+
+showMetaEnv sig ctx = intercalate "\n" . fmap showEntry . assocs where
+  showEntry (m,ty) = "?M" ++ show m ++ " : " ++ showTerm sig ctx ty
+  
+showSubst sig ctx = intercalate "\n" . fmap showEntry . assocs where
+  showEntry (m,ty) = "?M" ++ show m ++ " = " ++ showTerm sig ctx ty
 
 showQName :: [String] -> String
 showQName = intercalate "."

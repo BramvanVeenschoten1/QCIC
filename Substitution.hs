@@ -12,12 +12,24 @@ liftFrom :: Int -> Int -> Term -> Term
 liftFrom k n = f k where
   f k (App (Var m) xs)
     | m >= k = App (Var (m + n)) (fmap (liftFrom k n) xs)
-  f k (App head xs) = App head (fmap (liftFrom k n) xs)
-  f k (Pi p m name ta tb) = Pi p m name (liftFrom k n ta) (liftFrom (k + 1) n tb)
-  f k t = t
+  f k (App head xs) = App (g k head) (fmap (liftFrom k n) xs)
+  f k t = Utils.map (const (+1)) k f t
+  
+  g k (Var m)
+    | m >= k = Var (m + n)
+  g _ hd = hd
+  
+  --f k (Pi p m name ta tb) = Pi p m name (liftFrom k n ta) (liftFrom (k + 1) n tb)
+  --f k t = t
 
 lift :: Int -> Term -> Term
 lift = liftFrom 0
+
+mkApp :: Term -> [Term] -> Term
+mkApp (App head args) args' = App head (args ++ args')
+mkApp t [] = t 
+mkApp (Lam p m name ty body) (arg : args) = mkApp (psubst [arg] body) args --error "betaredex"
+mkApp t args = error "illegal application heads"
 
 psubst :: [Term] -> Term -> Term
 psubst args = f 0 where
@@ -27,13 +39,14 @@ psubst args = f 0 where
     | n >= k + nargs = App (Var (n - nargs)) args'
     | n < k          = App t args'
     | otherwise      = case lift k (fromMaybe (error "Var in subst out of range") (nth (n - k) args)) of
-      App f args'' -> App f (args'' ++ args')
-      pi -> pi
+      --App f args'' -> App f (args'' ++ args')
+      --pi -> pi
+      t -> mkApp t args'
   h _ t args' = App t args'
   
   f k (App fun args) = h k fun (fmap (f k) args)
-  f k (Pi p m name src dst) = Pi p m name (f k src) (f (k + 1) dst)
-  f k x = x
+  f k x = Utils.map (const (+1)) k f x
+
 
 subst :: Term -> Term -> Term
 subst = psubst . (:[])

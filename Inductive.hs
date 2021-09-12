@@ -62,16 +62,13 @@ allOccurrencesPositive :: Signature -> Context -> Loc -> Int -> Int -> Int -> In
 allOccurrencesPositive st ctx loc defcount defno paramno n nn t = f (whnf st [] t) where
   f (Pi p m name ta tb) = do
     let ctx' = Hyp name ta Nothing : ctx
-    
-    --if doesNotOccur ctx' 0 0 tb
-    --then strictlyPositive st ctx loc n nn ta
-    --else assert (doesNotOccur ctx n nn ta) (show loc ++ "Recursive arguments may not be depended upon")
-      
     strictlyPositive st ctx loc n nn ta   
     allOccurrencesPositive st ctx' loc defcount defno paramno (n+1)(nn+1) tb
   f (tb @ (App head args)) = h head (g (length ctx) paramno args tb)
   
-  g depth 0 args tb = pure ()
+  g depth 0 args tb =
+    assert (all (doesNotOccur ctx n nn) args)
+      (show loc ++ "\nType constructor may not occur in its own indices")
   g depth pno (App (Var n) [] : args) tb
     | n == depth - defcount - paramno + pno - 1 = g depth (pno - 1) args tb
   g depth pno (arg:_) tb = do
@@ -97,23 +94,23 @@ strictlyPositive st ctx loc n nn t = f (whnf st [] t) where
   f t | doesNotOccur ctx n nn t = pure ()
   f (Pi p m name ta tb) = do
     assert (doesNotOccur ctx n nn ta)
-           (show loc ++ "Recursive occurrence in negative position")
+           (show loc ++ "\nRecursive occurrence in negative position")
   
     strictlyPositive st (Hyp name ta Nothing : ctx) loc (n+1) (nn+1) tb
   f (App (Ind obj_id _ uniparamno) args) = do
     let (left_params,right_params) = Data.List.splitAt uniparamno args
-        block = fromJust (Data.Map.lookup obj_id (sigInd st))
+        block = fromMaybe (error "bad blockno in inductive") (Data.Map.lookup obj_id (sigInd st))
         ctors = concat (fmap introRules block)
         ctors' = fmap (\(_,ty) -> instantiateCtor left_params ty) ctors
 
     assert (all (doesNotOccur ctx n nn) right_params)
-           (show loc ++ "Recursive occurrence may only be in uniform parameters of a previously defined inductive type")
+           (show loc ++ "\nRecursive occurrence may only be in uniform parameters of a previously defined inductive type")
     
     mapM_ (weaklyPositive st ctx loc n nn obj_id) ctors'
   f (App fun args) = 
     assert (all (doesNotOccur ctx n nn) args)
-           (show loc ++ "Cannot determine strict positivity of recursive occurrence in function call")
-  f _ = Left (show loc ++ "Strict positivity check wildcard error")
+           (show loc ++ "\ncannot determine strict positivity of recursive occurrence in function call")
+  f _ = Left (show loc ++ "\nStrict positivity check wildcard error")
 {- 
    why does matita:
    - disallow nesting in mutual types?
@@ -127,11 +124,11 @@ weaklyPositive st ctx loc n nn block_no t = f ctx n nn (substWithDummy block_no 
   f ctx n nn te = case whnf st [] te of
     App _ args ->
       assert (all (doesNotOccur ctx n nn) args)
-             (show loc ++ "Recursive occurrence may only be in uniform parameters of a previously defined inductive type")
+             (show loc ++ "\nRecursive occurrence may only be in uniform parameters of a previously defined inductive type")
     Pi p m name ta tb -> do
       let ctx' = Hyp name ta Nothing : ctx
       f ctx' (n+1) (nn+1) tb
       if doesNotOccur ctx' 0 0 tb
       then strictlyPositive st ctx loc n nn ta
       else  assert (doesNotOccur ctx n nn ta)
-                   (show loc ++ "Recursive occurrence in negative position")
+                   (show loc ++ "\nRecursive occurrence in negative position")

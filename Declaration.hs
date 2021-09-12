@@ -222,17 +222,20 @@ checkDefinition st defs = do
     
     defcount = length defs
     
-    prepareClause num ty (loc,pats,rhs) = do
-        pats' <- evalStateT (checkPatterns st loc 0 pats ty) 0
-        pure (Problem num [] pats' rhs)
+    prepareClause ty num (loc,pats,rhs) = do
+        pats' <- checkPatterns st loc 0 pats ty
+        pure (Problem num [] mempty pats' rhs)
     
-    checkClauses st num clauses ty = do
-      problems <- mapM (prepareClause num ty) clauses
-      (ECST _ nodes bodies _) <- execStateT (compileEquations st [] [] problems ty) (ECST mempty [] [] 0)
-      pure (fmap fst nodes, bodies)
-    
-    --(names,qnames) = unzip (fmap (\bind ->
-    --  let name = binderName bind in (name, [moduleName st, name])) binders)
+    checkClauses st clauses ty = do
+      problems <- zipWithM (prepareClause ty) [0..] clauses
+      (tree, ECST clauses _) <- runStateT (compileEquations st [] problems ty) (ECST mempty 0)
+      -- maybe emit some redundancy warning here
+      let
+        clauses' = fmap
+          (fromMaybe (error "use of redundant clause") . flip M.lookup clauses)
+          [0 .. length clauses - 1]
+      
+      pure (clauses',tree)
     
     (names,qnames) = unzip (fmap (\name -> (name, [moduleName st, name])) binders)
   
@@ -241,6 +244,9 @@ checkDefinition st defs = do
   --traceM "checking signatures"
 
   tys <- mapM checkSignature tys
+
+  --traceM "signatures"
+  --mapM_ (traceM . showTerm (signature st) []) tys
 
   -- insert types into context
   let
@@ -260,7 +266,7 @@ checkDefinition st defs = do
 
   --traceM "checking clauses"
 
-  (nodes,bodies) <- unzip <$> sequence (zipWith3 (checkClauses dum_st) [0..] clausess tys)
+  (clausess',trees) <- unzip <$> zipWithM (checkClauses dum_st) clausess tys
   
   --traceM $ showCaseTree (head trees)
   
@@ -271,13 +277,13 @@ checkDefinition st defs = do
     
     uniparamno = 0
     
-    height = 1 + maximum (concatMap (fmap (\t -> computeHeight () t 0)) bodies)
+    height = 1 + maximum (concatMap (fmap (\t -> computeHeight () t 0)) clausess')
     
     new_names = updateNameSpace (zip3 qnames locs heads) (internalNames st)
     
     heads = fmap (\n -> Def obj_id n uniparamno height) defnos
   
-    mkDef name ty nodes clauses = let
+    mkDef name ty clauses tree = let
       
       replaceDummies () (App head args) =
         mkApp (replaceHead head) (fmap (replaceDummies ()) args)  
@@ -290,9 +296,9 @@ checkDefinition st defs = do
       
       clauses' = fmap (replaceDummies ()) clauses
       
-      in Definition name ty height clauses' nodes
+      in Definition name ty height clauses' tree
   
-    defs = zipWith4 mkDef names tys nodes bodies
+    defs = zipWith4 mkDef names tys clausess' trees
     -- we still need to count height and replace dummy references
     new_sig = Signature (sigInd obs) (M.insert obj_id defs alldefs)
     

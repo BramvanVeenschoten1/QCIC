@@ -53,11 +53,12 @@ data Term
   | Lam Plicity Mult String Term Term
   | Pi  Plicity Mult String Term Term
 
+-- the temptation arises to implement the env filter in regular term applications,
+-- and have the clauses as closed terms
 data Tree
   = Body  Int [Int]
   | Intro String Tree
   | Case  Int [([String],Tree)]
-  -- for each branch, arguments, target no, env filter
 
 data Inductive = Inductive {
   indName    :: String,

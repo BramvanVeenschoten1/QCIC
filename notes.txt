@@ -1,0 +1,110 @@
+- once again the idea to compile to case-expressions arises, but the costs have to be re-iterated:
+  - keeping track of induction variables (meaning which parameter of the function is decreasing)
+    - we can actually retain the reduction behaviour if we mark parts of the term as 'tree' or 'body'
+  - reduction producing unreadable messes
+    - to be precise, this is only an issue when functions are in types, which in this theory means
+      predicates and theorems. (definitions of types by pattern-matching is not allowed) The issue
+      here can be alleviated by using inductively encodes predicates.
+    - another way to alleviate this is to have the reduction engine and the prettyprinter work together
+      to expand definitions prudently.
+    - The issue is also not as bad as when we have recursors, where a term may expand all definitions
+  - requiring the elaborator to know about the equality type
+  - having to implement axiom K as a primitive, or accomodating rewrite rules
+  - having to assert the conflict axiom
+  - deriving conflict proofs for each datatype and having the elaborator know about it
+  - deriving injectivity proofs for each constructor and having the elaborator know about it
+  - requiring a proper modulesystem for the elaborator to find auxiliaries, including:
+    - the equality type, refl, J and K
+    - the empty type
+    - the conflict axiom
+    - conflict functions
+    - injectivity functions
+  - disabling erased splitting for types with disjoint constructors
+    can be derived, only disables erased recursion on types with disjoint constructors
+  - all this work producing unification evidence you don't even know how to
+  - complicating linearity checks (either split envs or lift linear variables)
+  - losing injectivity for erased constructor arguments
+- benefits:
+  - smaller kernel free from unification
+  - simplified reduction
+  - simplified termination checks?
+  - simplified core language?
+  - free up the switch
+  - no cascade of top-level definitions resulting from case-expressions or destructuring lets
+  - termination checker can easily admit nested recursion
+
+consider local matching shenanigans for case-trees:
+ - case-blocks have easier linearity checking after lifting to functions
+ - termination checking either has to be done before lifting, which pollutes core terms,
+   or the termination checker has to expand definitions by case-tree to check nested recursion.
+   
+non-recursive (and thus non-splitting) functions can be separated to ensure their reduction behaviour is
+  just beta-reduction
+  
+case-trees might become slightly simpler if the leaves are just application terms that express the env filters,
+  it might be conducive to handling uniform parameters and recursive references in the context.
+
+consider local matching for case-expressions:
+ - trivial, lol
+ - each node in the case tree can be a non-recursive top-level definition. This way the context during
+   checking is clean, and it will work without complicating the termination checker. inlining might be
+   difficult considering recursion, so we might just stick to local definitions. either way, after
+   erasure to F-omega, inlining is mandatory
+
+consider implementing K in terms of Leibniz equality.
+  this means the kernel won't have to inspect user datatypes, and a proper
+  erased K might still be implemented for the elaborator. The question remains
+  whether this K will be used relevantly. If so, the endeavor is useless unless
+  repaired with an erase substitution function for Leibniz equality.
+  proof outline:
+  0. eq (a : Type)(x y : a): Type = Pi p : a -> Type, p x -> p y
+     refl (a : Type)(x : a): eq a x x = \p px, px
+     K : Pi (a : Type)(x : a)(e : eq a x x)(p : eq a x x -> Type), p (refl a x) -> p e
+     K a x (\p px, px) prefl = prefl
+     
+  1. prove UIP: forall (0 a : Type)(0 x y : a)(0 e1 e2 : eq x y), eq e1 e2
+  2. specifically: forall (0 a : Type)(0 x : a)(0 e : eq x x), eq refl e
+  3. use erased substitution (derivable from erased J for any equality)
+     forall (a : Type)(x : a)(0 e : eq x x)(0 p : eq x x -> Type)(1 prefl : p refl), p e =
+       Subst {eq x x} {refl} {e} p UIP
+
+consider a simple termination checking method:
+  Require the recursive args to be the first and leftmost split.
+  T-checking a block will consist of first finding the recursive arguments
+  and then the decreasing paths, instead of brute forcing any possible solution.
+
+another fun little question: if lambdas are restricted to positions where their type is known, would it be sensible to delete their type annotations? maybe keep multiplicity for implementing erasure?
+
+a little roadmap:
+0. [x] deciding and implementing a syntax
+1. [x] naive, untyped left-to-right unification
+2. [ ] disciplined, typed unification
+3. [ ] explicitly recording unification evidence somehow?
+4. [ ]  to cases?
+
+a medium-term roadmap:
+- Axiom K
+- record syntax
+- case expressions
+- destructuring let
+- liftable let rec
+- type classes
+- erasure to F-omega
+
+a few reasons why unification of type-level variables is problematic:
+- its translation to eliminators requires different equality types
+- injectivity is not derivable for existential types
+- instantiations of type variables with inductive types may confuse the equation compiler;
+  a pattern of a variable type that would later be instantiated to some inductive type
+  could have been a nullary constructor but was already written of as a variable.
+- it would be nice if the EqCo accomodates non-uniform type parameters, even if a system
+  with eliminators does not directly support them. To do this, unification must avoid
+  introducing equalities if the indices are free variables, and reintroduce the variables
+  depending on the instantiated variables, much like in qtt2
+- erasure to F-omega means either type indices still remain and we have to deal with
+  coercions like in GHC's system FC, or we use 'unsafe' coercions.
+
+on @patterns:
+- @patterns are not convertible with their variables
+- linear @patterns might not be supported for now, to keep linearity checking simple.
+  

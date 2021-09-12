@@ -32,3 +32,18 @@ subst p refl prefl = prefl
 cong : Pi {0 a b : Type}{0 x y : a}(f : a -> b), eq x y -> eq (f x) (f y)
 cong f refl = refl
 
+{-
+data foo0 : Type -> Type where
+  bar : foo0 (foo0 bool)
+-- -}
+{-
+data foo1 : Type where
+  bar : (foo1 -> void) -> foo1
+-- -}
+{-
+data foo2(a : Type): Type where
+  bar : (a -> void) -> foo2 a
+
+data foo3: Type where
+  bar : foo2 foo3 -> foo3
+--}
