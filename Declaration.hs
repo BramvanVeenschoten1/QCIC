@@ -277,7 +277,7 @@ checkDefinition st defs = do
     
     uniparamno = 0
     
-    height = 1 + maximum (concatMap (fmap (\t -> computeHeight () t 0)) clausess')
+    height = 1 + maximum (0 : concatMap (fmap (\t -> computeHeight () t 0)) clausess')
     
     new_names = updateNameSpace (zip3 qnames locs heads) (internalNames st)
     

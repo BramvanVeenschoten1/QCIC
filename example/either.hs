@@ -6,6 +6,21 @@ data either (a b : Type) : Type where
   left  : a -> either a b
   right : b -> either a b
 
+either_ind : Pi {0 a b : Type}
+                (0 p : either a b -> Type),
+                (Pi x : a, p (left x)) ->
+                (Pi x : b, p (right x)) ->
+                Pi x : either a b, p x
+either_ind p pl pr (left x) = pl x
+either_ind p pl pr (right x) = pr x
+
+either_case : Pi {0 a b c : Type}, (a -> c) -> (b -> c) -> either a b -> c
+either_case f g (left x) = f x
+either_case f g (right x) = g x
+
+decidable : Type -> Type
+decidable p = either p (not p)
+
 map : Pi {0 a b e : Type}, (a -> b) -> either e a -> either e b
 map f (right x) = right (f x)
 map f (left e) = left e

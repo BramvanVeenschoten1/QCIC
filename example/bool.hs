@@ -7,7 +7,7 @@ data bool : Type where
   true : bool
   false : bool
   
-conflict : Pi {0 a : Type}, eq true false => a
+conflict : Pi {0 a : Type}, eq false true => a
 conflict () 
 
 not : bool -> bool

@@ -98,7 +98,8 @@ typeOfHead sig ctx t = case t of
 
 typeOf :: Signature -> Context -> Term -> Term
 typeOf sig ctx = f where
-  f (App head tail)   = h (typeOfHead sig ctx head) tail
+  f Type = Kind
+  f (App head tail) = h (typeOfHead sig ctx head) tail
   f (Pi p m name src dst) = typeOf sig (Hyp name src Nothing : ctx) dst
   f (Lam p m name src dst) = Pi p m name src (typeOf sig (Hyp name src Nothing : ctx) dst)
   f (Let name ty val body) = psubst [val] (typeOf sig (Hyp name ty (Just val) : ctx) body)
@@ -169,11 +170,11 @@ checkUse _ _ _ = pure ()
 
 lamAux :: ElabState -> Context -> Loc -> Loc -> String -> Expr -> Term -> Either String (Term,Uses)
 lamAux st ctx loc nloc name body ty = case whnf (signature st) ctx ty of
-  Pi Implicit m name src dst -> do
-    (body',uses) <- lamAux st (Hyp name src Nothing : ctx) loc nloc name body dst
+  Pi Implicit m name' src dst -> do
+    (body',uses) <- lamAux st (Hyp name' src Nothing : ctx) loc nloc name body dst
     let (use:uses') = uses
-    checkUse name m use
-    pure (Lam Implicit m name src body', uses')
+    checkUse name' m use
+    pure (Lam Implicit m name' src body', uses')
   Pi Explicit m _ src dst -> do
     (body',uses) <- check st (Hyp name src Nothing : ctx) body dst
     let (use:uses') = uses
