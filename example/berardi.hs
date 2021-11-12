@@ -20,6 +20,9 @@ data retract_cond (a b : Type): Type where
 trivial_retract : Pi {0 a : Type}, retract a a
 trivial_retract = mkr id id (\x, refl)
 
+trivial_retract_cond : Pi {0 a : Type}, retract_cond a a
+trivial_retract_cond = mkc id id (\r x, refl)
+
 i2 : Pi {0 a b : Type}, retract_cond a b -> a -> b
 i2 (mkc i j inv) = i
 
@@ -67,7 +70,7 @@ not_lem LEM =
   in let projU : U -> PU = \u, u U
   in let injU : PU -> U = \h X, Psi X (Phi U h)
   in let Lemma2 : Pi f : PU, prelude.eq (projU (injU f)) f =
-    \f, inv2 (Lemma1 U U) trivial_retract f
+    \f, inv2 trivial_retract_cond trivial_retract f
   in let PU_retracts_U : retract PU U = mkr injU projU Lemma2
   in let elem : U -> U -> Type = \u v, lift (projU v u)
   in let is_empty : Type => bool = \p, dec_is_empty (LEM p) 

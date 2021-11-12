@@ -87,4 +87,27 @@ list_monoid =
     nil_right_id
     append_associative
 
+reverse2 : Pi {0 a : Type}, list a -> list a
+reverse2 nil = nil
+reverse2 (cons x xs) = append (reverse2 xs) (cons x nil)
+
+lemma0 : Pi {0 a : Type}(xs ys : list a)(P : list a -> Type), P (reverse2 (append xs ys)) -> P (append (reverse2 ys) (reverse2 xs))
+lemma0 nil ys P = subst P (nil_left_id (reverse2 ys))
+lemma0 (cons x xs) ys P pf =
+  let xn : list a = cons x nil in
+  let revxs : list a = reverse2 xs in
+  let revys : list a = reverse2 ys in
+  let ih = lemma0 xs ys in
+  let pf2 : P (append (reverse2 (append xs ys)) xn) = pf in
+  let pf3 : P (append (append revys revxs) xn) = ih (\zs, P (append zs xn)) pf2 in
+  let pf4 : P (append revys (append revxs xn)) = subst P (sym (append_associative revys revxs xn)) pf3 in
+    pf4
+
+reverse_append : Pi {0 a : Type}(xs ys : list a), prelude.eq (reverse2 (append xs ys)) (append (reverse2 ys) (reverse2 xs))
+reverse_append xs ys = lemma0 xs ys (prelude.eq (reverse2 (append xs ys))) refl
+
+map_composition : Pi {0 a b c : Type}(f : b -> c)(g : a -> b)(xs : list a), prelude.eq (map (comp f g) xs) (map f (map g xs))
+map_composition f g nil = refl
+map_composition f g (cons x xs) = cong (cons (f (g x))) (map_composition f g xs)
+
 
